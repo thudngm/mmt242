@@ -9,13 +9,14 @@ const setupSocket = require('./socket');
 const http = require('http');
 const channelRoutes = require("./routes/channel");
 const path = require("path");
+const allowedOrigins = process.env.ALLOWED_ORIGINS;
 
 require("dotenv").config();
 
 // app.use(cors());
 //đổi thành địa chỉ IP của máy chủ
 app.use(cors({
-  origin: ["http://localhost:3000", "http://192.168.1.6:3000"],
+  origin: allowedOrigins,
   credentials: true,
 }));
 app.use(express.json());
