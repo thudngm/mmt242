@@ -22,7 +22,6 @@ export default function LiveStreamingPage() {
         process.env.REACT_APP_LOCALHOST_KEY
       );
       if (!userData) {
-        // Visitor mode: No user in localStorage, allow access
         setCurrentUser(undefined);
         return;
       }
@@ -30,11 +29,9 @@ export default function LiveStreamingPage() {
       try {
         const user = await JSON.parse(userData);
         if (!user || !user.username) {
-          // Invalid user data, treat as visitor
           localStorage.removeItem(process.env.REACT_APP_LOCALHOST_KEY);
           setCurrentUser(undefined);
         } else {
-          // Valid user, set currentUser for authenticated mode
           setCurrentUser(user);
         }
       } catch (error) {
@@ -48,7 +45,7 @@ export default function LiveStreamingPage() {
 
   // Initialize Socket.IO connection
   useEffect(() => {
-    const newSocket = io("http://localhost:5001", {
+    const newSocket = io(process.env.REACT_APP_SERVER_URL, {
       transports: ["websocket"],
       reconnection: true,
       reconnectionAttempts: 5,
@@ -58,6 +55,7 @@ export default function LiveStreamingPage() {
 
     newSocket.on("connect", () => {
       console.log("Connected to server:", newSocket.id);
+      setError(null);
       if (!currentUser) {
         newSocket.emit("register-visitor", { nickname: `Visitor_${newSocket.id}` });
       }
@@ -68,6 +66,7 @@ export default function LiveStreamingPage() {
 
     newSocket.on("disconnect", (reason) => {
       console.log("Disconnected from server:", reason);
+      setError("Disconnected from server. Attempting to reconnect...");
     });
 
     newSocket.on("streamers-update", (activeStreamers) => {
@@ -83,12 +82,22 @@ export default function LiveStreamingPage() {
       }
     });
 
-    newSocket.on("receive-comment", ({ comment, from, username }) => {
-      setComments((prev) => [...prev, `${username}: ${comment}`]);
+    newSocket.on("receive-comment", ({ _id, comment, from, username }) => {
+      setComments((prev) => {
+        // Prevent duplicates by checking _id
+        if (prev.some((c) => c._id === _id)) {
+          return prev;
+        }
+        return [...prev, { _id, username, comment }];
+      });
     });
 
     newSocket.on("comments-history", (comments) => {
-      setComments(comments.map((c) => `${c.username}: ${c.comment}`));
+      setComments(comments.map((c) => ({
+        _id: c._id,
+        username: c.username,
+        comment: c.comment,
+      })));
     });
 
     newSocket.on("error", ({ message }) => {
@@ -100,7 +109,7 @@ export default function LiveStreamingPage() {
 
     newSocket.on("connect_error", (error) => {
       console.error("Socket.IO connection error:", error);
-      setError("Failed to connect to server");
+      setError("Failed to connect to server. Please try again later.");
     });
 
     return () => {
@@ -120,12 +129,13 @@ export default function LiveStreamingPage() {
       navigate("/login");
       return;
     }
-    if (isStreamer) return; // Prevent multiple start-stream calls
+    if (isStreamer) return;
     setIsStreamer(true);
     socket.emit("start-stream", {
       username: currentUser.username,
       channelId: "main",
     });
+    navigate(`/live?streamerId=${socket.id}`);
     setSelectedStreamer(socket.id);
   };
 
@@ -133,22 +143,44 @@ export default function LiveStreamingPage() {
     setIsStreamer(false);
     socket.emit("stop-stream");
     setSelectedStreamer(null);
+    navigate("/live");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (comment.trim()) {
-      if (!currentUser) {
-        setError("Please log in to comment");
-        navigate("/login");
+    if (!comment.trim()) return;
+    if (!currentUser) {
+      setError("Please log in to comment");
+      navigate("/login");
+      return;
+    }
+    if (!socket.connected) {
+      setError("Not connected to server. Attempting to reconnect...");
+      const reconnectPromise = new Promise((resolve) => {
+        socket.once("connect", () => resolve(true));
+        setTimeout(() => resolve(false), 5000);
+      });
+      const reconnected = await reconnectPromise;
+      if (!reconnected) {
+        setError("Failed to reconnect. Please refresh the page.");
         return;
       }
+    }
+    try {
       socket.emit("send-comment", {
         comment,
         streamerId: isStreamer ? socket.id : selectedStreamer,
         username: currentUser.username,
+      }, (response) => {
+        if (response?.error) {
+          setError(response.error);
+        } else {
+          setComment("");
+        }
       });
-      setComment("");
+    } catch (err) {
+      console.error("Error sending comment:", err);
+      setError("Failed to send comment. Please try again.");
     }
   };
 
@@ -211,8 +243,8 @@ export default function LiveStreamingPage() {
         </VideoBoard>
         <CommentSection>
           <Comments>
-            {comments.map((c, idx) => (
-              <Comment key={idx}>{c}</Comment>
+            {comments.map((c) => (
+              <Comment key={c._id}>{`${c.username}: ${c.comment}`}</Comment>
             ))}
           </Comments>
           <form onSubmit={handleSubmit}>
@@ -221,7 +253,7 @@ export default function LiveStreamingPage() {
               value={comment}
               onChange={(e) => setComment(e.target.value)}
               placeholder="Comment here..."
-              disabled={!currentUser}
+              disabled={!currentUser || !socket.connected}
             />
           </form>
         </CommentSection>
