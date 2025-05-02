@@ -53,7 +53,7 @@ module.exports = (io) => {
     // Log connection
     logConnection("Peer connected", socket);
 
-    // Xử lý online status
+    // Handle online status
     socket.on("add-user", async (userId) => {
       try {
         onlineUsers.set(userId, socket.id);
@@ -78,7 +78,7 @@ module.exports = (io) => {
       }
     });
 
-    // Xử lý disconnect
+    // Handle disconnect
     socket.on("disconnect", async () => {
       try {
         for (let [userId, socketId] of onlineUsers.entries()) {
@@ -156,6 +156,8 @@ module.exports = (io) => {
       pendingStreams.add(socket.id);
       const streamer = { id: socket.id, username, channelId: channelId || "default" };
       activeStreamers.set(socket.id, streamer);
+      // Join the streamer's own room to receive comments
+      socket.join(`stream_${socket.id}`);
       io.emit("streamers-update", Array.from(activeStreamers.values()));
       
       try {
@@ -196,7 +198,8 @@ module.exports = (io) => {
       if (activeStreamers.has(socket.id)) {
         const streamer = activeStreamers.get(socket.id);
         activeStreamers.delete(socket.id);
-        
+        // Leave the streamer's room
+        socket.leave(`stream_${socket.id}`);
         logConnection("Stream stopped", socket);
       } else {
         logConnection("Stream stop requested but not found", socket);
@@ -237,16 +240,17 @@ module.exports = (io) => {
       logConnection("WebRTC answer sent", socket);
     });
 
-    socket.on("send-comment", async ({ comment, streamerId, username }) => {
+    socket.on("send-comment", async ({ comment, streamerId, username }, callback) => {
       if (!username || username === "Guest") {
-        socket.emit("error", { message: "Authentication required to comment" });
-        
+        const errorMsg = "Authentication required to comment";
+        socket.emit("error", { message: errorMsg });
+        if (typeof callback === "function") {
+          callback({ error: errorMsg });
+        }
         logConnection("Comment blocked - auth required", socket);
         return;
       }
       
-      socket.username = username;
-      socket.isVisitor = false;
       const from = socket.id;
       const newComment = new Comment({
         streamerId,
@@ -255,26 +259,39 @@ module.exports = (io) => {
         comment,
       });
       
-      await newStream.save();
-      io.to(`stream_${streamerId}`).emit("receive-comment", {
-        comment,
-        from,
-        username,
-      });
-      socket.emit("receive-comment", {
-        comment,
-        from,
-        username,
-      });
-      
-      logConnection("Comment received", socket);
+      try {
+        const savedComment = await newComment.save();
+        io.to(`stream_${streamerId}`).emit("receive-comment", {
+          _id: savedComment._id,
+          comment,
+          from,
+          username,
+        });
+        if (typeof callback === "function") {
+          callback({ success: true });
+        }
+        logConnection("Comment received", socket);
+      } catch (error) {
+        console.error("Error saving comment:", error);
+        const errorMsg = "Failed to save comment";
+        socket.emit("error", { message: errorMsg });
+        if (typeof callback === "function") {
+          callback({ error: errorMsg });
+        }
+        logConnection("Comment save failed", socket);
+      }
     });
 
     socket.on("get-comments", async ({ streamerId }) => {
-      const comments = await Comment.find({ streamerId })
-        .sort({ timestamp: -1 })
-        .limit(50);
-      socket.emit("comments-history", comments);
+      try {
+        const comments = await Comment.find({ streamerId })
+          .sort({ timestamp: -1 })
+          .limit(50);
+        socket.emit("comments-history", comments);
+      } catch (error) {
+        console.error("Error fetching comments:", error);
+        socket.emit("error", { message: "Failed to fetch comments" });
+      }
     });
 
     socket.on("ice-candidate", ({ candidate, to }) => {
@@ -284,8 +301,13 @@ module.exports = (io) => {
     });
 
     socket.on("get-stream-history", async () => {
-      const streams = await Stream.find({}).sort({ startTime: -1 }).limit(10);
-      socket.emit("stream-history", streams);
+      try {
+        const streams = await Stream.find({}).sort({ startTime: -1 }).limit(10);
+        socket.emit("stream-history", streams);
+      } catch (error) {
+        console.error("Error fetching stream history:", error);
+        socket.emit("error", { message: "Failed to fetch stream history" });
+      }
     });
 
     socket.on("disconnect", async () => {
@@ -300,6 +322,7 @@ module.exports = (io) => {
       activePeers = activePeers.filter((peer) => peer.id !== socket.id);
       if (!pendingStreams.has(socket.id) && activeStreamers.has(socket.id)) {
         activeStreamers.delete(socket.id);
+        socket.leave(`stream_${socket.id}`);
       }
       
       io.emit("streamers-update", Array.from(activeStreamers.values()));
