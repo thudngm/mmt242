@@ -7,6 +7,7 @@ import Register from "./pages/Register";
 import Streaming from "./pages/Streaming";
 import Channel from "./pages/Channel";
 import ChannelChat from "./pages/ChannelChat";
+import PastStreams from "./pages/PastStream";
 import io from "socket.io-client";
 
 // const socket = io("http://localhost:5001");
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/" element={<Chat />} />
         <Route path="/live" element={<Streaming />} />
         <Route path="/channel" element={<Channel />} />
+        <Route path="/past-streams" element={<PastStreams />} />
         <Route path="/channel/:channelId" element={<ChannelChat />} />
       </Routes>
     </BrowserRouter>

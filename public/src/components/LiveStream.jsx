@@ -40,9 +40,9 @@ const LiveStream = ({ isStreamer, streamerId, socket }) => {
             socket.emit("offer", { offer, to: from });
             pc.onconnectionstatechange = () => {
               console.log(`Connection state: ${pc.connectionState}`);
-              if (pc.connectionState === "failed") {
-                setError("Failed to connect to viewer");
-              }
+              // if (pc.connectionState === "failed") {
+              //   setError("Failed to connect to viewer");
+              // }
             };
           });
         } catch (error) {

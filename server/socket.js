@@ -2,7 +2,7 @@ const fs = require("fs");
 const logFile = "connections.log";
 const Stream = require("./models/streamModel");
 const Comment = require("./models/commentModel");
-const User = require("./models/userModel"); 
+const User = require("./models/userModel");
 
 let activePeers = [];
 const onlineUsers = new Map();
@@ -14,20 +14,21 @@ const pendingStreams = new Set();
 function logConnection(event, socket) {
   try {
     const timestamp = new Date().toISOString();
-    
+
     // Get the best available client IP
     const ip = getClientIp(socket);
-    
+
     // Get the port from socket (try multiple sources)
-    const port = socket.conn?.remotePort || 
-                 socket.request?.connection?.remotePort || 
-                 socket.request?.socket?.remotePort || 
-                 socket.handshake.address?.port || 
-                 'no-port';
-    
+    const port =
+      socket.conn?.remotePort ||
+      socket.request?.connection?.remotePort ||
+      socket.request?.socket?.remotePort ||
+      socket.handshake.address?.port ||
+      "no-port";
+
     // Only log ip, port, and socketId
     const detailsStr = `ip=${ip}, port=${port}, socketId=${socket.id}`;
-    
+
     const logMessage = `[${timestamp}] - ${event} (${detailsStr})\n`;
     fs.appendFileSync(logFile, logMessage);
   } catch (err) {
@@ -37,15 +38,15 @@ function logConnection(event, socket) {
 
 // Function to get the best available client IP
 function getClientIp(socket) {
-  const forwardedFor = socket.handshake.headers['x-forwarded-for'];
-  const realIp = socket.handshake.headers['x-real-ip'];
+  const forwardedFor = socket.handshake.headers["x-forwarded-for"];
+  const realIp = socket.handshake.headers["x-real-ip"];
   const address = socket.handshake.address?.address || socket.handshake.address;
-  
+
   // Prioritize 127.0.0.1 for localhost over ::1
-  if (address === '::1' || address === '::ffff:127.0.0.1') {
-    return '127.0.0.1';
+  if (address === "::1" || address === "::ffff:127.0.0.1") {
+    return "127.0.0.1";
   }
-  return forwardedFor || realIp || address || 'unknown';
+  return forwardedFor || realIp || address || "unknown";
 }
 
 module.exports = (io) => {
@@ -57,21 +58,21 @@ module.exports = (io) => {
     socket.on("add-user", async (userId) => {
       try {
         onlineUsers.set(userId, socket.id);
-        
+
         await User.findByIdAndUpdate(userId, {
-          status: 'online',
-          lastSeen: new Date()
+          status: "online",
+          lastSeen: new Date(),
         });
 
         // Broadcast to all clients
         io.emit("user-status-update", {
           userId: userId,
-          status: 'online'
+          status: "online",
         });
 
         // Send current online users list
         socket.emit("initial-online-users", Array.from(onlineUsers.keys()));
-        
+
         logConnection("User online status updated", socket);
       } catch (err) {
         logConnection("Error updating user status", socket);
@@ -84,17 +85,17 @@ module.exports = (io) => {
         for (let [userId, socketId] of onlineUsers.entries()) {
           if (socketId === socket.id) {
             onlineUsers.delete(userId);
-            
+
             await User.findByIdAndUpdate(userId, {
-              status: 'offline',
-              lastSeen: new Date()
+              status: "offline",
+              lastSeen: new Date(),
             });
 
             io.emit("user-status-update", {
               userId: userId,
-              status: 'offline'
+              status: "offline",
             });
-            
+
             logConnection("User offline status updated", socket);
             break;
           }
@@ -125,7 +126,7 @@ module.exports = (io) => {
         const { ip, port } = peerInfo;
         activePeers.push({ id: socket.id, ip, port });
         socket.emit("registration-success", activePeers);
-        
+
         logConnection("Peer registered", socket);
       }
     });
@@ -134,7 +135,7 @@ module.exports = (io) => {
       socket.username = nickname || `Visitor_${socket.id}`;
       socket.userId = null;
       socket.isVisitor = true;
-      
+
       logConnection("Visitor registered", socket);
     });
 
@@ -146,20 +147,26 @@ module.exports = (io) => {
     socket.on("start-stream", async (data) => {
       const { channelId, username } = data;
       if (!username || username === "Guest") {
-        socket.emit("error", { message: "Authentication required to start streaming" });
-        
+        socket.emit("error", {
+          message: "Authentication required to start streaming",
+        });
+
         logConnection("Stream start failed - auth required", socket);
         return;
       }
       socket.username = username;
       socket.isVisitor = false;
       pendingStreams.add(socket.id);
-      const streamer = { id: socket.id, username, channelId: channelId || "default" };
+      const streamer = {
+        id: socket.id,
+        username,
+        channelId: channelId || "default",
+      };
       activeStreamers.set(socket.id, streamer);
       // Join the streamer's own room to receive comments
       socket.join(`stream_${socket.id}`);
       io.emit("streamers-update", Array.from(activeStreamers.values()));
-      
+
       try {
         const newStream = new Stream({
           streamerId: socket.id,
@@ -167,7 +174,10 @@ module.exports = (io) => {
           channelId: channelId || "default",
         });
         await newStream.save();
-        
+
+        socket.streamId = newStream._id;
+        streamer.streamId = newStream._id;
+
         logConnection("Stream started", socket);
 
         // Notify all online users about the new stream
@@ -182,9 +192,11 @@ module.exports = (io) => {
               startTime: newStream.startTime,
             });
             // Find the user's socket to log the notification
-            io.of("/").sockets.get(userSocketId)?.let(userSocket => {
-              logConnection("New stream notification sent", userSocket);
-            });
+            io.of("/")
+              .sockets.get(userSocketId)
+              ?.let((userSocket) => {
+                logConnection("New stream notification sent", userSocket);
+              });
           }
         }
       } catch (error) {
@@ -200,11 +212,14 @@ module.exports = (io) => {
         activeStreamers.delete(socket.id);
         // Leave the streamer's room
         socket.leave(`stream_${socket.id}`);
+        await Stream.findByIdAndUpdate(streamer.streamId, {
+          endTime: new Date(),
+        });
         logConnection("Stream stopped", socket);
       } else {
         logConnection("Stream stop requested but not found", socket);
       }
-      
+
       io.emit("streamers-update", Array.from(activeStreamers.values()));
     });
 
@@ -219,68 +234,83 @@ module.exports = (io) => {
       if (streamer) {
         socket.join(`stream_${streamerId}`);
         io.to(streamerId).emit("request-offer", { from: socket.id });
-        
+
         logConnection("Viewer requested offer", socket);
       } else {
         socket.emit("error", { message: "Streamer not found" });
-        
+
         logConnection("Offer request failed - streamer not found", socket);
       }
     });
 
     socket.on("offer", ({ offer, to }) => {
       io.to(to).emit("offer", { offer, from: socket.id });
-      
+
       logConnection("WebRTC offer sent", socket);
     });
 
     socket.on("answer", ({ answer, to }) => {
       io.to(to).emit("answer", { answer, from: socket.id });
-      
+
       logConnection("WebRTC answer sent", socket);
     });
 
-    socket.on("send-comment", async ({ comment, streamerId, username }, callback) => {
-      if (!username || username === "Guest") {
-        const errorMsg = "Authentication required to comment";
-        socket.emit("error", { message: errorMsg });
-        if (typeof callback === "function") {
-          callback({ error: errorMsg });
+    socket.on(
+      "send-comment",
+      async ({ comment, streamerId, username }, callback) => {
+        if (!username || username === "Guest") {
+          const errorMsg = "Authentication required to comment";
+          socket.emit("error", { message: errorMsg });
+          if (typeof callback === "function") {
+            callback({ error: errorMsg });
+          }
+          logConnection("Comment blocked - auth required", socket);
+          return;
         }
-        logConnection("Comment blocked - auth required", socket);
-        return;
-      }
-      
-      const from = socket.id;
-      const newComment = new Comment({
-        streamerId,
-        channelId: "main",
-        username,
-        comment,
-      });
-      
-      try {
-        const savedComment = await newComment.save();
-        io.to(`stream_${streamerId}`).emit("receive-comment", {
-          _id: savedComment._id,
-          comment,
-          from,
+
+        socket.username = username;
+        socket.isVisitor = false;
+        const from = socket.id;
+        const stream = activeStreamers.get(streamerId);
+        if (!stream) {
+          const errorMsg = "Stream not found";
+          socket.emit("error", { message: errorMsg });
+          if (typeof callback === "function") {
+            callback({ error: errorMsg });
+          }
+          logConnection("Comment failed - stream not found", socket);
+          return;
+        }
+        const newComment = new Comment({
+          streamerId,
+          streamId: socket.streamId || stream.streamId,
           username,
+          comment,
         });
-        if (typeof callback === "function") {
-          callback({ success: true });
+
+        try {
+          const savedComment = await newComment.save();
+          io.to(`stream_${streamerId}`).emit("receive-comment", {
+            _id: savedComment._id,
+            comment,
+            from,
+            username,
+          });
+          if (typeof callback === "function") {
+            callback({ success: true });
+          }
+          logConnection("Comment received", socket);
+        } catch (error) {
+          console.error("Error saving comment:", error);
+          const errorMsg = "Failed to save comment";
+          socket.emit("error", { message: errorMsg });
+          if (typeof callback === "function") {
+            callback({ error: errorMsg });
+          }
+          logConnection("Comment save failed", socket);
         }
-        logConnection("Comment received", socket);
-      } catch (error) {
-        console.error("Error saving comment:", error);
-        const errorMsg = "Failed to save comment";
-        socket.emit("error", { message: errorMsg });
-        if (typeof callback === "function") {
-          callback({ error: errorMsg });
-        }
-        logConnection("Comment save failed", socket);
       }
-    });
+    );
 
     socket.on("get-comments", async ({ streamerId }) => {
       try {
@@ -294,9 +324,28 @@ module.exports = (io) => {
       }
     });
 
+    socket.on("get-past-stream-comments", async ({ streamId }) => {
+      try {
+        const stream = await Stream.findById(streamId);
+        if (!stream) {
+          socket.emit("error", { message: "Stream not found" });
+          return;
+        }
+        const comments = await Comment.find({ streamId })
+          .sort({ timestamp: 1 }) // Sort ascending for playback
+          .limit(100);
+        socket.emit("past-stream-comments", { streamId, comments });
+      } catch (error) {
+        console.error("Error fetching past stream comments:", error);
+        socket.emit("error", {
+          message: "Failed to fetch past stream comments",
+        });
+      }
+    });
+
     socket.on("ice-candidate", ({ candidate, to }) => {
       io.to(to).emit("ice-candidate", { candidate, from: socket.id });
-      
+
       logConnection("ICE candidate exchanged", socket);
     });
 
@@ -324,7 +373,7 @@ module.exports = (io) => {
         activeStreamers.delete(socket.id);
         socket.leave(`stream_${socket.id}`);
       }
-      
+
       io.emit("streamers-update", Array.from(activeStreamers.values()));
     });
   });
@@ -332,7 +381,7 @@ module.exports = (io) => {
   io.on("connection", (socket) => {
     socket.on("join-channel", (channelId) => {
       socket.join(channelId);
-      
+
       logConnection("User joined channel", socket);
     });
 
@@ -342,7 +391,7 @@ module.exports = (io) => {
         senderId,
         message,
       });
-      
+
       logConnection("Channel message sent", socket);
     });
   });

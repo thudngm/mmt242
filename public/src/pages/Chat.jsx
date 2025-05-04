@@ -131,6 +131,10 @@ export default function Chat() {
     navigate("/channel");
   };
 
+  const goToPastStreams = () => {
+    navigate("/past-streams");
+  };
+
   const joinStream = (streamerId) => {
     navigate(`/live?streamerId=${streamerId}`);
   };
@@ -142,8 +146,11 @@ export default function Chat() {
   return (
     <Container>
       <h2>Chat Room</h2>
-      <LiveButton onClick={goToLiveStreaming}>Live Streaming</LiveButton>
-      <ChannelButton onClick={goToChannel}>Channel</ChannelButton>
+      <ButtonContainer>
+        <LiveButton onClick={goToLiveStreaming}>Live Streaming</LiveButton>
+        <ChannelButton onClick={goToChannel}>Channel</ChannelButton>
+        <PastStreamsButton onClick={goToPastStreams}>Past Streams</PastStreamsButton>
+      </ButtonContainer>
       <StreamList>
         {activeStreams.length > 0 ? (
           activeStreams.map(stream => (
@@ -214,6 +221,11 @@ const Container = styled.div`
   }
 `;
 
+const ButtonContainer = styled.div`
+  display: flex;
+  gap: 10px;
+`;
+
 const LiveButton = styled.button`
   background-color: #ff5e57;
   color: #fff;
@@ -230,11 +242,23 @@ const ChannelButton = styled.button`
   background-color: #4CAF50;
   color: #fff;
   border: none;
-  padding: 0.5rem 1rem;
+  padding: 0.6rem 1rem;
   border-radius: 0.5rem;
   cursor: pointer;
   &:hover {
-    background-color: #4CAF50;
+    background-color: #45a049;
+  }
+`;
+
+const PastStreamsButton = styled.button`
+  background-color: #2196F3;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  &:hover {
+    background-color: #1e88e5;
   }
 `;
 
